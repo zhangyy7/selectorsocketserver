@@ -3,8 +3,10 @@ import hashlib
 import platform
 import logging.config
 import json
+import threading
 import selectors
 from conf import settings
+
 
 logging.config.dictConfig(settings.LOGGING_DIC)
 logger = logging.getLogger(__name__)
@@ -36,7 +38,7 @@ class RequestHandler(object):
             print("客户端已断开")
         logger.debug(head)
         head_dict = json.loads(head)
-        print(head_dict)
+        # print(head_dict)
         action = head_dict.get("action", 0)
         if not action:
             logger.error("not find action")
@@ -68,6 +70,20 @@ class RequestHandler(object):
         except Exception:
             return self.request.send(b'2999')
 
+    def _put(self, filename, total_size):
+        with open(filename, 'wb') as f:
+            recv_size = 0
+            # start = time.time()
+            m = hashlib.md5()
+            while recv_size < total_size:
+                data = self.request.recv(min(1024, total_size - recv_size))
+                m.update(data)
+                f.write(data)
+                recv_size += len(data)
+            else:
+                new_file_md5 = m.hexdigest()
+        return new_file_md5
+
     def put(self, cmd_dict):
         """处理客户端上传文件的请求"""
         logger.debug(cmd_dict)
@@ -95,23 +111,10 @@ class RequestHandler(object):
             return self.request.send(b'3000')
         else:
             self.request.send(b'0000')
-        with open(os.path.join(target_path, filename), 'wb') as f:
-            self.server.selector.register(f, selectors.EVENT_READ)
-            recv_size = 0
-            # start = time.time()
-            m = hashlib.md5()
-            while recv_size < size:
-                data = self.request.recv(min(1024, size - recv_size))
-                m.update(data)
-                f.write(data)
-                recv_size += len(data)
-            else:
-                new_file_md5 = m.hexdigest()
-                # print(new_file_md5)
-                # print(time.time() - start)
-                # print('接收到的文件大小为：', recv_size)
-                print("文件{}接收成功".format(filename))
-                self.server.selector.unregister(f)
+        t = threading.Thread(target=self._put, args=(
+            os.path.join(target_path, filename), size))
+        new_file_md5 = t.start()
+        t.join()
         client_file_md5 = self.request.recv(1024).decode()
         status_code = '0000'
         if new_file_md5 != client_file_md5:
