@@ -1,5 +1,6 @@
 import socket
 import selectors
+import _io
 import logging.config
 from conf import settings
 from . import requesthandler
@@ -56,6 +57,8 @@ class SelectorsSocketserver(object):
                     new_conn, new_addr = conn.accept()
                     # new_conn.setblocking(False)
                     self.selector.register(new_conn, selectors.EVENT_READ)
+                elif isinstance(conn, _io.TextIOWrapper):
+                    break
                 else:
                     try:
                         self.process_request(conn, client_address)  # 处理请求
