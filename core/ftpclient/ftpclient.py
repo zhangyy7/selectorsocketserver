@@ -1,5 +1,6 @@
-#! /usr/bin/env python
-# -*-coding: utf-8 -*-
+"""ftp客户端模块."""
+# ! /usr/bin/env python
+# -*- coding: utf-8 -*-
 import socket
 import hashlib
 import os
@@ -8,23 +9,28 @@ import getpass
 import sys
 import shutil
 
-from conf import settings
+import settings
 
 
 class FtpClient(object):
-    """ftp客户端"""
+    """ftp客户端."""
 
-    def __init__(self, ip, port):
-        self.ip = ip
+    def __init__(self, host, port):
+        """接收ip地址和端口号，调用连接方法."""
+        self.my_current_dir = object()
+        self.my_username = object()
+        self.my_pwd = object()
+        self.host = host
         self.port = port
         self.client = socket.socket()
-        self.connect_to_server(self.ip, self.port)
+        self.connect_to_server()
 
-    def connect_to_server(self, ip, port):
-        self.client.connect((self.ip, self.port))
+    def connect_to_server(self):
+        """连接到服务器."""
+        self.client.connect((self.host, self.port))
 
     def route(self, cmd):
-        """判断cmd是否存在，存在则执行cmd指令"""
+        """解析输入的命令并执行对应的方法."""
         if cmd:
             action, *_ = cmd.split(maxsplit=1)
             if hasattr(self, action):
@@ -36,7 +42,7 @@ class FtpClient(object):
             return '1000'
 
     def put(self, cmd):
-        """上传文件到客户端"""
+        """上传文件到客户端."""
         cmd, local_filepath, *remote_filepath = cmd.strip().split()
         # print(local_filepath)
         try:
@@ -57,18 +63,16 @@ class FtpClient(object):
                 if response != "0000":
                     print(settings.ERROR_CODE.get(response))
                     return
-                m = hashlib.md5()
-                with open(local_filepath, 'rb') as f:
+                md5obj = hashlib.md5()
+                with open(local_filepath, 'rb') as fileobj:
                     complete_size = 0
-                    for line in f:
-                        m.update(line)
+                    for line in fileobj:
+                        md5obj.update(line)
                         self.client.send(line)
                         complete_size += len(line)
                         self.progressbar(complete_size, head.get("size"))
-                    else:
-                        # print(time.time() - start)
-                        file_md5 = m.hexdigest()
-                        print("文件{}发送完毕！".format(local_filepath))
+                    file_md5 = md5obj.hexdigest()
+                    print("文件{}发送完毕！".format(local_filepath))
                 self.client.send(file_md5.encode('utf-8'))
                 server_file_md5 = self.client.recv(1024).decode('utf-8')
                 # print(server_file_md5, file_md5)
@@ -76,33 +80,35 @@ class FtpClient(object):
                     return True
             else:
                 raise OSError("文件不存在")
-        except Exception as e:
-            print(e)
+        except Exception as ex:
+            print(ex)
 
     def get(self, cmd):
-        """从服务端下载文件"""
-        print("开始下载")
+        """从服务端下载文件."""
         try:
             cmd, remote_filepath, local_file_path = cmd.strip().split()
         except ValueError:
             return print("请告诉我要把文件下载到哪个目录")
         head = {
-            "action": "get",
+            "action": cmd,
             "filepath": remote_filepath
         }
         self.client.send(json.dumps(head).encode())  # 发送下载请求
-        # print("发送请求给服务端")
-        server_response = json.loads(self.client.recv(1024).decode())
+        print("发送请求给服务端")
+        server_r = self.client.recv(1024).decode()
+        print("收到的信息：", server_r, type(server_r))
+        server_response = json.loads(server_r)
+        print("收到的文件头信息：", server_response)
 
         if server_response.get("status_code", 0) == '3000':  # 服务端返回异常状态码
             return '3000'
         else:  # 服务端返回的不是异常状态
             server_file_name = server_response.get("filename", 0)
             try:
-                server_file_size = int(server_response.get("size", 0))
-            except ValueError as e:
-                print(e)
-                return e
+                server_file_size = int(server_response.get("filesize", 0))
+            except ValueError as ex:
+                print(ex)
+                return ex
             if all((server_file_name, server_file_size)):  # 判断服务端返回的2个数据是否正常
                 local_file_path_name = os.path.join(
                     local_file_path, server_file_name)
@@ -111,7 +117,7 @@ class FtpClient(object):
                     received_size = os.path.getsize(temp_file_path)
                 else:
                     received_size = 0
-                request_info = {"status_code": "0000",
+                request_info = {"action": "finish",
                                 "received_size": received_size}
                 self.client.send(
                     json.dumps(request_info).encode()
@@ -121,16 +127,16 @@ class FtpClient(object):
                 # 告诉服务端发给我的数据有异常,并返回
                 return self.client.send(
                     json.dumps({"status_code": "9000"}).encode())
-            m = hashlib.md5()
+            md5obj = hashlib.md5()
             try:
-                with open(temp_file_path, 'ab+') as f:
+                with open(temp_file_path, 'ab+') as fileobj:
                     while received_size < server_file_size:  # 开始接收文件
                         data = self.client.recv(
                             min(1024, server_file_size - received_size))
                         if not data:
                             break
-                        m.update(data)
-                        f.write(data)
+                        md5obj.update(data)
+                        fileobj.write(data)
                         self.progressbar(received_size, server_file_size)
                         received_size += len(data)
                     else:
@@ -142,14 +148,16 @@ class FtpClient(object):
                 exit("谢谢使用")
             shutil.copyfile(temp_file_path, local_file_path_name)
             shutil.os.remove(temp_file_path)
-            self.client.send("0000".encode())  # 告诉服务器我已经接收完毕了
-            recv_file_md5 = m.hexdigest()
-            server_file_md5 = self.client.recv(1024).decode()
-            # print(recv_file_md5, server_file_md5)
-            if recv_file_md5 == server_file_md5:
-                return "0000"
+            # self.client.send("0000".encode())  # 告诉服务器我已经接收完毕了
+            # recv_file_md5 = m.hexdigest()
+            # server_file_md5 = self.client.recv(1024).decode()
+            # # print(recv_file_md5, server_file_md5)
+            # if recv_file_md5 == server_file_md5:
+            return "0000"
 
-    def progressbar(self, complete, total):
+    @staticmethod
+    def progressbar(complete, total):
+        """进度条."""
         one_star = total / 100
         star_count = int(complete // one_star)
         precentage = complete / total
@@ -161,15 +169,11 @@ class FtpClient(object):
             sys.stdout.write("\n")
 
     def register(self, username, password, disk_size):
-        """
-        用户注册
-        param disk_size: 磁盘空闲大小，单位MB
-
-        """
+        """用户注册."""
         bt_disk_size = int(disk_size) * 1024 * 1024
-        m = hashlib.md5()
-        m.update(password.encode())
-        password = m.hexdigest()
+        md5obj = hashlib.md5()
+        md5obj.update(password.encode())
+        password = md5obj.hexdigest()
         info_dict = {
             "action": "register",
             "username": username,
@@ -178,42 +182,55 @@ class FtpClient(object):
         }
         # print(info_dict)
         self.client.send(json.dumps(info_dict, ensure_ascii=False).encode())
-        return self.client.recv(1024).decode()
+        total_size = int(self.client.recv(1024).decode())
+        recv_size = 0
+        datas = []
+        while recv_size < total_size:
+            data = self.client.recv(min(1024, total_size - recv_size))
+            recv_size += len(data)
+            datas.append(data)
+        result = b''.join(datas).decode()
+        result = json.loads(result)
+        return result
 
     def login(self, username, password):
-        m = hashlib.md5()
-        m.update(password.encode())
-        password = m.hexdigest()
-        info_dict = {
+        """登陆."""
+        md5obj = hashlib.md5()
+        md5obj.update(password.encode())
+        password = md5obj.hexdigest()
+        request_msg = {
             "action": "login",
             "username": username,
             "password": password
         }
-        self.client.send(json.dumps(info_dict).encode())
+        self.client.send(json.dumps(request_msg).encode())
         try:
-            result_size = int(json.loads(self.client.recv(1024).decode()))
+            response_len = int(self.client.recv(1024))
         except ValueError:
-            return self.client.send(b'6000')
-        self.client.send(b'0000')
+            return
+        finish_cmd = {"action": "finish"}
+        self.client.send(json.dumps(finish_cmd).encode())
+        response_list = []
         recv_size = 0
-        data_list = []
-        while recv_size < result_size:
-            data = self.client.recv(min(1024, result_size - recv_size))
-            data_list.append(data)
+        print("结果长度：", response_len)
+        while recv_size < response_len:
+            data = self.client.recv(min(1024, response_len - recv_size))
+            response_list.append(data)
             recv_size += len(data)
-        recv_data = b''.join(data_list).decode()
-        recv_dict = json.loads(recv_data)
-        # print(recv_dict)
-        recv_status = recv_dict.get("status_code", 0)
-        if recv_status == '0000':
-            recv_dir = recv_dict.get("dir")
+        response_msg = b''.join(response_list)
+        response_dict = json.loads(response_msg.decode())
+        print(response_dict)
+        response_status = response_dict.get("status", 0)
+        # print(response_dict)
+        if response_status == '0000':
+            recv_dir = response_dict.get("dir")
             self.my_current_dir = recv_dir
             self.my_username = username
             self.my_pwd = password
-        return recv_status
+        return response_status
 
     def cd(self, command):
-        """切换目录"""
+        """切换目录."""
         cmd, *new_dir = command.strip().split(maxsplit=1)
         # print(new_dir)
         cmd_dict = {"action": cmd, "dir": new_dir}
@@ -238,7 +255,7 @@ class FtpClient(object):
         return response_dict.get("status_code")
 
     def mkdir(self, command):
-        """创建目录"""
+        """创建目录."""
         cmd, new_dir = command.strip().split()
         cmd_dict = {"action": cmd, "new_dir": new_dir}
         self.client.send(json.dumps(cmd_dict).encode())
@@ -247,7 +264,7 @@ class FtpClient(object):
         return result
 
     def ls(self, command):
-        """查看目录下的子目录和文件"""
+        """查看目录下的子目录和文件."""
         cmd, *new_dir = command.strip().split()
         # print(new_dir)
         if not new_dir:
@@ -255,41 +272,50 @@ class FtpClient(object):
         cmd_dict = {"action": cmd, "dir": new_dir[0]}
         # print(cmd_dict)
         self.client.send(json.dumps(cmd_dict, ensure_ascii=False).encode())
-        server_response_size = int(self.client.recv(1024).decode())
-        # print(server_response_size)
-        if server_response_size == 1000:
+        try:
+            total_size = int(self.client.recv(1024))
+        except ValueError:
             return
-        self.client.send(b'0000')
+        finish_cmd = {"action": "finish"}
+        self.client.send(json.dumps(finish_cmd).encode())
+        datas = []
         recv_size = 0
-        recv_data_list = []
-        while recv_size < server_response_size:
-            data = self.client.recv(
-                min(1024, server_response_size - recv_size))
+        print(total_size)
+        while recv_size < total_size:
+            data = self.client.recv(min(1024, total_size - recv_size))
             recv_size += len(data)
-            recv_data_list.append(data)
-        cmd_result = b''.join(recv_data_list)
-        print(cmd_result.decode())
+            datas.append(data)
+        cmd_result = b''.join(datas)
+        result_dict = json.loads(cmd_result.decode())
+        result_status = result_dict.get("status", 0)
+        new_dir = result_dict.get("new_dir", 0)
+        if all((result_status == "0000", new_dir)):
+            print(new_dir)
         return
 
 
 class InterActive(object):
-    """与用户交互"""
+    """与用户交互的类."""
 
     def __init__(self, ip, port):
+        """实例化一个客户端类."""
         self.client = FtpClient(ip, port)
 
     def interactive(self):
+        """获取用户输入的命令，把命令交给route去解析."""
         command = input("{}#".format(self.client.my_current_dir)).strip()
         if command == 'exit':
             exit("GoodBye")
         self.client.route(command)
 
     def login(self):
+        """获取用户输入的用户名密码，交给客户端类去处理."""
         username = input("请输入用户名:\n>>").strip()
         password = getpass.getpass("请输入密码：\n>>").strip()
         return self.client.login(username, password)
 
     def register(self):
+        """获取用户输入的用户名密码，交给客户端类去处理."""
         username = input("请输入用户名:\n>>").strip()
         password = getpass.getpass("请输入密码：\n>>").strip()
         disk_size = input("请输入您所需磁盘空间，单位MB，最大1024MB").strip()
@@ -297,11 +323,12 @@ class InterActive(object):
 
 
 def main():
+    """程序主函数."""
     while True:
         try:
-            ip = input("请输入IP服务器IP地址：\n>>").strip()
+            host = input("请输入IP服务器IP地址：\n>>").strip()
             port = int(input("请输入端口号：\n>>").strip())
-            conn = InterActive(ip, port)
+            conn = InterActive(host, port)
             break
         except ValueError:
             print("端口号必须是数字！")
@@ -313,8 +340,8 @@ def main():
         if choice == "1":
             while True:
                 result = conn.register()
-                # print("result", result)
-                if result == "0000":
+                print("result", result)
+                if result.get("status") == "0000":
                     print("注册成功，请登录！")
                     break
                 else:
