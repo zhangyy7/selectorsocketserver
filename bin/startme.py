@@ -1,11 +1,13 @@
-#! /usr/bin/env python
-# -*-coding: utf-8 -*-
+"""程序启动模块."""
+# ! /usr/bin/env python
+# -*- coding: utf-8 -*-
 
 from core.ftpclient import ftpclient
 from core.ftpserver import selector_socket_server
 
 
 def run():
+    """启动脚本."""
     while True:
         choice = input("1.启动服务  2.运行客户端").strip()
         if choice == "1":

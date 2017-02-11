@@ -7,10 +7,11 @@ import queue
 import collections
 import os
 import json
-import settings
 import platform
 import asyncio
 import _io
+
+from conf import settings
 
 
 class SelectSocketServer(object):
@@ -141,8 +142,6 @@ class RequestHandler(object):
             try:
                 data = self.request.recv(1024)
             except BlockingIOError:  # 处理读穿异常
-                print("没数据了")
-                print("没数据时的temp：", temp_list)
                 if not temp_list:
                     print("直接返回")
                     return
@@ -312,10 +311,13 @@ class RequestHandler(object):
 
 
 class MyConnectionError(Exception):
+    """socket异常类."""
+
     pass
 
 
 def main():
+    """启动程序需执行此函数."""
     server = SelectSocketServer(8888, RequestHandler)
     server.serv_forever()
 
