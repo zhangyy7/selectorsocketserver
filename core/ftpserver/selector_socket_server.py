@@ -327,9 +327,11 @@ class RequestHandler(object):
             f = open(file_path, 'rb')
         else:
             return {"status": "3000"}  # 文件不存在
-
         self.request_queue["temp"].put(f)
         self.request_queue["output"].put(json.dumps(message_head).encode())
+
+    def put(self, cmd):
+        """执行put方法."""
 
 
 class MyConnectionError(Exception):

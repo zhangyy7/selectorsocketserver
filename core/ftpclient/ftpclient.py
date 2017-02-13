@@ -94,12 +94,8 @@ class FtpClient(object):
             "filepath": remote_filepath
         }
         self.client.send(json.dumps(head).encode())  # 发送下载请求
-        print("发送请求给服务端")
         server_r = self.client.recv(1024).decode()
-        print("收到的信息：", server_r, type(server_r))
         server_response = json.loads(server_r)
-        print("收到的文件头信息：", server_response)
-
         if server_response.get("status_code", 0) == '3000':  # 服务端返回异常状态码
             return '3000'
         else:  # 服务端返回的不是异常状态
