@@ -197,6 +197,7 @@ class FtpClient(object):
         total_size = int(self.client.recv(1024).decode())
         recv_size = 0
         datas = []
+        print("total_size:", total_size)
         while recv_size < total_size:
             data = self.client.recv(min(1024, total_size - recv_size))
             recv_size += len(data)
