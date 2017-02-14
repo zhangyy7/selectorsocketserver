@@ -11,7 +11,7 @@ import platform
 import asyncio
 import _io
 
-import settings
+from conf import settings
 
 
 class SelectSocketServer(object):
@@ -216,10 +216,11 @@ class RequestHandler(object):
         if self.response_message:
             # print(self.response_message)
             if isinstance(self.response_message, _io.BufferedReader):
-                self.response_message.seek(self.client_recv_size)
+                self.send_fileobj = self.response_message
+                self.send_fileobj.seek(self.client_recv_size)
                 if not self.file_size:
                     self.file_size = os.path.getsize(
-                        self.response_message.fileno())
+                        self.send_fileobj.fileno())
                 self.is_wirte_finish = 0
                 if self.client_recv_size < self.file_size:
                     data = yield from self.send_file()
@@ -369,7 +370,8 @@ class RequestHandler(object):
             self.request_queue["temp"].put(f)
         else:
             message_head = {"status": "3000"}  # 文件不存在
-        self.request_queue["output"].put(json.dumps(message_head).encode())
+        message = json.dumps(message_head).encode()
+        self.request_queue["output"].put(message)
 
     @asyncio.coroutine
     def put(self, cmd):

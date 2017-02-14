@@ -9,7 +9,7 @@ import getpass
 import sys
 import shutil
 
-import settings
+from conf import settings
 
 
 class FtpClient(object):
