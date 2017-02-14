@@ -9,7 +9,7 @@ import getpass
 import sys
 import shutil
 
-from conf import settings
+import settings
 
 
 class FtpClient(object):
@@ -58,26 +58,37 @@ class FtpClient(object):
                 self.client.send(json.dumps(
                     head, ensure_ascii=False).encode(encoding='utf_8'))
                 # print("发送head完毕")
-                response = self.client.recv(1024).decode()
-                # print(server_response)
+                res_size = int(self.client.recv(1024).decode())
+                print(res_size)
+                finish = json.dumps({"action": "finish"}).encode()
+                self.client.sendall(finish)
+                recv_size = 0
+                res_data_list = []
+                while recv_size < res_size:
+                    data = self.client.recv(1024)
+                    res_data_list.append(data)
+                    recv_size += len(data)
+                res_datas = b''.join(res_data_list).decode()
+                response_dict = json.loads(res_datas)
+                response = response_dict.get("status")
                 if response != "0000":
                     print(settings.ERROR_CODE.get(response))
                     return
-                md5obj = hashlib.md5()
+                # md5obj = hashlib.md5()
                 with open(local_filepath, 'rb') as fileobj:
                     complete_size = 0
                     for line in fileobj:
-                        md5obj.update(line)
+                        # md5obj.update(line)
                         self.client.send(line)
                         complete_size += len(line)
                         self.progressbar(complete_size, head.get("size"))
-                    file_md5 = md5obj.hexdigest()
+                    # file_md5 = md5obj.hexdigest()
                     print("文件{}发送完毕！".format(local_filepath))
-                self.client.send(file_md5.encode('utf-8'))
-                server_file_md5 = self.client.recv(1024).decode('utf-8')
+                # self.client.send(file_md5.encode('utf-8'))
+                # server_file_md5 = self.client.recv(1024).decode('utf-8')
                 # print(server_file_md5, file_md5)
-                if server_file_md5 == file_md5:
-                    return True
+                # if server_file_md5 == file_md5:
+                #     return True
             else:
                 raise OSError("文件不存在")
         except Exception as ex:
@@ -94,9 +105,14 @@ class FtpClient(object):
             "filepath": remote_filepath
         }
         self.client.send(json.dumps(head).encode())  # 发送下载请求
+        # print("发送请求给服务端")
         server_r = self.client.recv(1024).decode()
+        print("收到的信息：", server_r, type(server_r))
         server_response = json.loads(server_r)
-        if server_response.get("status_code", 0) == '3000':  # 服务端返回异常状态码
+        print("收到的文件头信息：", server_response.get("status", 0))
+
+        if server_response.get("status", 0) == '3000':  # 服务端返回异常状态码
+            print("直接返回了")
             return '3000'
         else:  # 服务端返回的不是异常状态
             server_file_name = server_response.get("filename", 0)
@@ -261,6 +277,7 @@ class FtpClient(object):
 
     def ls(self, command):
         """查看目录下的子目录和文件."""
+        print("调用ls")
         cmd, *new_dir = command.strip().split()
         # print(new_dir)
         if not new_dir:

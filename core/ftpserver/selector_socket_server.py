@@ -37,12 +37,12 @@ class SelectSocketServer(object):
         exclusive_handler = self.request_handler_relation.get(
             request.fileno(), 0)
         if exclusive_handler:
-            print("老客户")
+            # print("老客户")
             handler = exclusive_handler
         else:
             handler = self.requesthandler(request, self)
             self.request_handler_relation[request.fileno()] = handler
-            print("新客户")
+            # print("新客户")
         return handler
 
     def get_request(self):
@@ -72,7 +72,7 @@ class SelectSocketServer(object):
                     # print(socketobj)
                     handler = self.get_handler(socketobj)
                     if event & selectors.EVENT_READ:  # 可读事件激活
-                        print("可读事件激活！")
+                        # print("可读事件激活！")
                         try:
                             handler.read_loop()
                         except MyConnectionError as e:
@@ -80,16 +80,15 @@ class SelectSocketServer(object):
                             self.close_request(socketobj)
                             continue
                         self.selector.modify(socketobj, selectors.EVENT_WRITE)
-                        print("将事件改为可写！")
+                        # print("将事件改为可写！")
                     elif event & selectors.EVENT_WRITE:  # 可写事件激活
                         # print("可写事件激活！")
                         is_wirte_finish = handler.write_loop()
                         if is_wirte_finish[0] == 1:
                             self.selector.modify(
                                 socketobj, selectors.EVENT_READ)
-                            print("将事件改为可读！")
+                            # print("将事件改为可读！")
                     else:
-                        print("什么都不是！")
                         pass
 
 
@@ -123,6 +122,12 @@ class RequestHandler(object):
         self.send_fileobj = None
         self.recv_fileobj = None
         self.response_message = None
+        self.is_put = 0
+        self.is_put_finish = 0
+        self.put_filesize = 0
+        self.is_put_done = 0
+        self.put_total_filesize = 0
+        self.put_fileobj = 0
         # print(self.response_message)
 
     def read_loop(self):
@@ -143,7 +148,6 @@ class RequestHandler(object):
     def read(self):
         """处理可读事件."""
         temp_list = []
-        print("收到的总数据列表：", temp_list)
         while True:  # 由于select是水平触发的，一旦有可读事件激活就代表读缓冲区满了，必须把数据全部读完
             try:
                 data = self.request.recv(1024)
@@ -154,28 +158,27 @@ class RequestHandler(object):
                 break
             temp_list.append(data)
         datas = b''.join(temp_list)
-        # print(datas.decode('gb18030'))
-        cmd_dic = json.loads(datas.decode())
-        # print("接收到客户端请求：", cmd_dic)
-        action = cmd_dic.get('action', 0)
-        res_dict = {}
-        if not action:
-            res_dict = {"status": "1000"}
-        else:
-            if hasattr(self, action):
-                func = getattr(self, action)
-                res_dict = yield from func(cmd_dic)
-                # print("读方法执行完毕")
+        if not self.is_put_done:
+            cmd_dic = json.loads(datas.decode())
+            action = cmd_dic.get('action', 0)
+            res_dict = {}
+            if not action:
+                res_dict = {"status": "1000"}
             else:
-                res_dict = {"status": "2000"}
-        # print("res_dict:", res_dict)
-        if res_dict:
-            response_message = json.dumps(res_dict).encode()
-            message_size = len(response_message)
-            self.request_queue["temp"].put(response_message)
-            self.request_queue["output"].put(
-                str(message_size).encode())
-        # print("读完了")
+                if hasattr(self, action):
+                    func = getattr(self, action)
+                    res_dict = yield from func(cmd_dic)
+                else:
+                    res_dict = {"status": "2000"}
+            if res_dict:
+                response_message = json.dumps(res_dict).encode()
+                message_size = len(response_message)
+                self.request_queue["temp"].put(response_message)
+                self.request_queue["output"].put(
+                    str(message_size).encode())
+        else:
+            # print("上传文件")
+            self.request_queue["output"].put(datas)
 
     def clean_var(self):
         """将发送文件相关的参数重置为默认值."""
@@ -184,6 +187,17 @@ class RequestHandler(object):
         self.recv_size = None
         self.send_fileobj = None
         self.recv_fileobj = None
+        self.response_message = None
+
+    def clean_put(self):
+        """将上传文件相关的参数重置为默认值."""
+        self.is_put = 0
+        self.is_put_finish = 0
+        self.put_filesize = 0
+        self.is_put_done = 0
+        self.put_total_filesize = 0
+        self.put_filesize = 0
+        self.put_fileobj = 0
         self.response_message = None
 
     @asyncio.coroutine
@@ -198,32 +212,58 @@ class RequestHandler(object):
         """可写事件调用这个方法，将数据发给客户端."""
         if self.request_queue["output"].qsize() > 0:
             self.response_message = self.request_queue["output"].get()
-        # print(self.response_message)
-        if isinstance(self.response_message, _io.BufferedReader):
-            self.send_fileobj.seek(self.client_recv_size)
-            if not self.file_size:
-                self.file_size = os.path.getsize(self.send_fileobj.fileno())
-            self.is_wirte_finish = 0
-            if self.client_recv_size < self.file_size:
-                data = yield from self.send_file()
-                self.client_recv_size += len(data)
-                self.request.sendall(data)
-                return self.is_wirte_finish
+            # print("待发数据：", self.response_message)
+        if self.response_message:
+            # print(self.response_message)
+            if isinstance(self.response_message, _io.BufferedReader):
+                self.response_message.seek(self.client_recv_size)
+                if not self.file_size:
+                    self.file_size = os.path.getsize(
+                        self.response_message.fileno())
+                self.is_wirte_finish = 0
+                if self.client_recv_size < self.file_size:
+                    data = yield from self.send_file()
+                    self.client_recv_size += len(data)
+                    self.request.sendall(data)
+                    return self.is_wirte_finish
+                else:
+                    self.clean_var()
+                    return self.is_wirte_finish
             else:
-                self.clean_var()
-                return self.is_wirte_finish
+                if self.is_put_done:
+                    yield from self.write_data_file()
+                    # print("调用写文件方法：", self.is_wirte_finish)
+                    if self.put_filesize == self.put_total_filesize:
+                        self.clean_put()
+                    return self.is_wirte_finish
+                else:
+                    self.request.sendall(self.response_message)
+                    # print("调用发数据方法:", self.response_message)
+                    if self.is_put_finish:
+                        print("将is_done改为1")
+                        self.is_put_done = 1
+                    return self.is_wirte_finish
         else:
-            self.request.sendall(self.response_message)
-            # print(self.is_wirte_finish)
+            self.clean_var()
             return self.is_wirte_finish
+
+    @asyncio.coroutine
+    def write_data_file(self):
+        """文件上传时写入文件方法."""
+        if self.put_filesize < self.put_total_filesize:
+            self.put_fileobj.write(self.response_message)
+            self.put_filesize += len(self.response_message)
 
     @asyncio.coroutine
     def finish(self, cmd=None):
         """这个方法是将要发给客户端的数据放到消息队列里."""
+        print("调用finish")
         if cmd:
             self.client_recv_size = int(cmd.get("received_size", 0))
-        self.send_fileobj = self.request_queue["temp"].get()
-        return self.request_queue["output"].put(self.send_fileobj)
+        if self.is_put:
+            self.is_put_finish = 1
+        self.send_data = self.request_queue["temp"].get()
+        return self.request_queue["output"].put(self.send_data)
 
     @asyncio.coroutine
     def register(self, userinfo_dict):
@@ -304,6 +344,7 @@ class RequestHandler(object):
         # print(cmd)
         dir_details = {"status": "0000",
                        "new_dir": platform.subprocess.getoutput(cmd)}
+        # print("dir_details:", dir_details)
         response_message = json.dumps(dir_details).encode()
         message_size = len(response_message)
         self.request_queue["temp"].put(response_message)
@@ -325,13 +366,24 @@ class RequestHandler(object):
             message_head = {"status": "0000",
                             "filename": filename, "filesize": filesize}
             f = open(file_path, 'rb')
+            self.request_queue["temp"].put(f)
         else:
-            return {"status": "3000"}  # 文件不存在
-        self.request_queue["temp"].put(f)
+            message_head = {"status": "3000"}  # 文件不存在
         self.request_queue["output"].put(json.dumps(message_head).encode())
 
+    @asyncio.coroutine
     def put(self, cmd):
         """执行put方法."""
+        self.put_filename = cmd.get("filename")
+        self.is_put = 1
+        self.put_total_filesize = cmd.get("size")
+        self.target_path = cmd.get("target_path")[0]
+        self.put_fileobj = open(os.path.join(
+            self.target_path, self.put_filename), 'ab')
+        response_message = json.dumps({"status": "0000"}).encode()
+        len_res = len(response_message)
+        self.request_queue["output"].put(str(len_res).encode())
+        self.request_queue["temp"].put(response_message)
 
 
 class MyConnectionError(Exception):
