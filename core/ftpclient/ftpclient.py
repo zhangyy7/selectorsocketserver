@@ -194,7 +194,12 @@ class FtpClient(object):
         }
         # print(info_dict)
         self.client.send(json.dumps(info_dict, ensure_ascii=False).encode())
-        total_size = int(self.client.recv(1024).decode())
+        try:
+            total_size = int(self.client.recv(1024).decode())
+        except ValueError:
+            return
+        cmd_finish = {"action": "finish"}
+        self.client.sendall(json.dumps(cmd_finish).encode())
         recv_size = 0
         datas = []
         print("total_size:", total_size)

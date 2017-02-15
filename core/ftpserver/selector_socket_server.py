@@ -167,7 +167,7 @@ class RequestHandler(object):
             else:
                 if hasattr(self, action):
                     func = getattr(self, action)
-                    res_dict = yield from func(cmd_dic)
+                    res_dict = yield from func(cmd_dic)  # 没有异常的时候res_dict是None
                 else:
                     res_dict = {"status": "2000"}
             if res_dict:
@@ -212,7 +212,7 @@ class RequestHandler(object):
         """可写事件调用这个方法，将数据发给客户端."""
         if self.request_queue["output"].qsize() > 0:
             self.response_message = self.request_queue["output"].get()
-            # print("待发数据：", self.response_message)
+            print("待发数据：", self.response_message)
         if self.response_message:
             # print(self.response_message)
             if isinstance(self.response_message, _io.BufferedReader):
